@@ -35,8 +35,8 @@ if [ "$first_time" = "yes" ]; then
 
 	eval "$(ssh-agent -s)"
 	ssh-add /home/robot/.ssh/id_ed25519
-	curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
-	apt update && apt install -y git-lfs
+	# sudo su -c "curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash"
+	# yesudo apt update && sudo apt install -y git-lfs
 	git lfs install # has to be run only once on a single user account
 	cd $ROOT_DIR && git submodule update --recursive --remote --init
 	
