@@ -34,10 +34,10 @@ WORKDIR /app
 
 # install miniconda 
 RUN wget \
-    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
-    && mkdir /root/.conda \
-    && bash Miniconda3-latest-Linux-x86_64.sh -b \
-    && rm -f Miniconda3-latest-Linux-x86_64.sh
+    https://repo.anaconda.com/miniconda/Miniconda3-py39_24.1.2-0-Linux-x86_64.sh
+RUN mkdir /root/.conda 
+RUN bash Miniconda3-py39_24.1.2-0-Linux-x86_64.sh -b 
+RUN rm -f Miniconda3-py39_24.1.2-0-Linux-x86_64.sh
 ENV PATH /root/miniconda3/bin:$PATH
 
 # setup polymetis conda env
@@ -47,11 +47,11 @@ RUN conda env create -f ./polymetis/environment.yml && \
 SHELL ["conda", "run", "-n", "polymetis-local", "/bin/bash", "-c"]
 
 # build libfranka and polymetis
-RUN ./scripts/build_libfranka.sh ${LIBFRANKA_VERSION} && \
-    mkdir -p ./polymetis/build && \
-    cd ./polymetis/build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_FRANKA=ON -DBUILD_TESTS=ON -DBUILD_DOCS=ON && \
-    make -j
+RUN ./scripts/build_libfranka.sh ${LIBFRANKA_VERSION}
+RUN mkdir -p ./polymetis/build
+RUN cd ./polymetis/build
+RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_FRANKA=ON -DBUILD_TESTS=ON -DBUILD_DOCS=ON
+RUN make -j
 
 # set polymetis config files
 WORKDIR /app
