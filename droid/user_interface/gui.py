@@ -27,7 +27,7 @@ class RobotGUI(tk.Tk):
     def __init__(self, robot=None, fullscreen=False, right_controller=True):
         # Initialize #
         super().__init__()
-        self.geometry("1500x1200")
+        self.geometry("2000x1200")
         self.attributes("-fullscreen", fullscreen)
         self.bind("<Escape>", lambda e: self.destroy())
         if right_controller:
@@ -72,10 +72,10 @@ class RobotGUI(tk.Tk):
             EnlargedImagePage,
             RequestedBehaviorPage,
             SceneChangesPage,
-            CalibrationPage,
-            CalibrateCamera,
-            IncompleteCalibration,
-            OldCalibration,
+            #CalibrationPage,
+            #CalibrateCamera,
+            #IncompleteCalibration,
+            #OldCalibration,
             OldScene,
         ):
             self.frames[F] = F(container, self)
