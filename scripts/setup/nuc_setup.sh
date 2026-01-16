@@ -91,7 +91,7 @@ if [ "$first_time" = "yes" ]; then
 
         DOCKER_COMPOSE_DIR="$ROOT_DIR/.docker/nuc"
         DOCKER_COMPOSE_FILE="$DOCKER_COMPOSE_DIR/docker-compose-nuc.yaml"
-        cd $DOCKER_COMPOSE_DIR && docker-compose -f $DOCKER_COMPOSE_FILE build
+        cd $DOCKER_COMPOSE_DIR && docker compose -f $DOCKER_COMPOSE_FILE build
 fi
 
 # find ethernet interface on device
