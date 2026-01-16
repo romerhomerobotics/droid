@@ -35,7 +35,7 @@ class FrankaRobot:
     def launch_robot(self):
         self._robot = RobotInterface(ip_address="localhost")
         self._gripper = GripperInterface(ip_address="localhost")
-        self._max_gripper_width = self._gripper.metadata.max_width
+        self._max_gripper_width = 0.086 #self._gripper.metadata.max_width
         self._ik_solver = RobotIKSolver()
         self._controller_not_loaded = False
 
@@ -44,7 +44,7 @@ class FrankaRobot:
         self._gripper_process.kill()
 
     def update_command(self, command, action_space="cartesian_velocity", gripper_action_space=None, blocking=False):
-        action_dict = self.create_action_dict(command, action_space=action_space, gripper_action_space=gripper_action_space)
+        action_dict = self.create_action_dict(command, action_space=action_space, gripper_action_space="position")
 
         self.update_joints(action_dict["joint_position"], velocity=False, blocking=blocking)
         self.update_gripper(action_dict["gripper_position"], velocity=False, blocking=blocking)

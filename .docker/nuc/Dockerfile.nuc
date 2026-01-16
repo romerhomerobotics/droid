@@ -47,11 +47,11 @@ RUN conda env create -f ./polymetis/environment.yml && \
 SHELL ["conda", "run", "-n", "polymetis-local", "/bin/bash", "-c"]
 
 # build libfranka and polymetis
-RUN ./scripts/build_libfranka.sh ${LIBFRANKA_VERSION}
-RUN mkdir -p ./polymetis/build
-RUN cd ./polymetis/build
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_FRANKA=ON -DBUILD_TESTS=ON -DBUILD_DOCS=ON
-RUN make -j
+RUN ./scripts/build_libfranka.sh ${LIBFRANKA_VERSION} && \
+    mkdir -p ./polymetis/build && \
+    cd ./polymetis/build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_FRANKA=ON -DBUILD_TESTS=ON -DBUILD_DOCS=ON && \
+    make -j
 
 # set polymetis config files
 WORKDIR /app
