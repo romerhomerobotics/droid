@@ -2,7 +2,7 @@ from droid.misc.parameters import *
 
 # Define your RealSense serial numbers as strings here
 # Replace these with the actual serial numbers you found
-hand_camera_id = "243222072357" 
+hand_camera_id = "135622077246" 
 varied_camera_1_id = ""
 
 camera_type_dict = {

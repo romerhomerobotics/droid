@@ -64,6 +64,9 @@ RUN apt-get update -y || true ; apt-get install --no-install-recommends lsb-rele
 RUN conda install -c conda-forge libstdcxx-ng requests # required for pyzed
 RUN python /usr/local/zed/get_python_api.py && python -m pip install --ignore-installed /app/pyzed-4.0-cp37-cp37m-linux_x86_64.whl
 
+#install pyrealsense2
+RUN python3 -m pip install pyrealsense2
+
 # install oculus reader
 RUN add-apt-repository universe && \
     apt-get update -y && \ 
