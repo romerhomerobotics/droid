@@ -72,10 +72,10 @@ class RobotGUI(tk.Tk):
             EnlargedImagePage,
             RequestedBehaviorPage,
             SceneChangesPage,
-            #CalibrationPage,
-            #CalibrateCamera,
-            #IncompleteCalibration,
-            #OldCalibration,
+            CalibrationPage,
+            CalibrateCamera,
+            IncompleteCalibration,
+            OldCalibration,
             OldScene,
         ):
             self.frames[F] = F(container, self)
@@ -1100,7 +1100,7 @@ class CameraPage(tk.Frame):
                 button = tk.Button(
                     self, height=0, width=0, command=lambda idx=(i * self.n_cols + j): self.update_image_grid(idx)
                 )
-                button.grid(row=i, column=j, sticky="s" if self.n_rows > 1 else "")
+                button.grid(row=i, column=j, sticky="s" if self.n_rows > 1 else "", pady=(self.winfo_height()*0.2, 0))
                 self.image_boxes.append(button)
 
                 # Start Image Thread #
@@ -1130,7 +1130,7 @@ class CameraPage(tk.Frame):
                 time.sleep(0.05)
                 continue
 
-            w, h = max(self.winfo_width(), 100), max(self.winfo_height(), 100)
+            w, h = max(self.winfo_width()*0.8, 100), max(self.winfo_height()*0.8, 100)
             img_w = int(w / self.n_cols * w_coeff)
             img_h = int(h / self.n_rows * h_coeff)
 

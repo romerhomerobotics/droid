@@ -2,15 +2,19 @@ import os
 import random
 from collections import defaultdict
 
-from droid.camera_utils.camera_readers.zed_camera import gather_zed_cameras
+# --- CHANGED: Import RealSense instead of ZED ---
+from droid.camera_utils.camera_readers.realsense_camera import gather_realsense_cameras
 from droid.camera_utils.info import get_camera_type
-
 
 class MultiCameraWrapper:
     def __init__(self, camera_kwargs={}):
         # Open Cameras #
-        zed_cameras = gather_zed_cameras()
-        self.camera_dict = {cam.serial_number: cam for cam in zed_cameras}
+        # --- CHANGED: Gather RealSense ---
+        rs_cameras = gather_realsense_cameras()
+        self.camera_dict = {cam.serial_number: cam for cam in rs_cameras}
+
+        if len(self.camera_dict) == 0:
+            print("WARNING: No RealSense cameras found.")
 
         # Set Correct Parameters #
         for cam_id in self.camera_dict.keys():
@@ -25,17 +29,12 @@ class MultiCameraWrapper:
     def get_camera(self, camera_id):
         return self.camera_dict[camera_id]
 
-    def enable_advanced_calibration(self):
-        for cam in self.camera_dict.values():
-            cam.enable_advanced_calibration()
-
-    def disable_advanced_calibration(self):
-        for cam in self.camera_dict.values():
-            cam.disable_advanced_calibration()
-
     def set_calibration_mode(self, cam_id):
-        # If High Res Calibration, Only One Can Run #
-        close_all = any([cam.high_res_calibration for cam in self.camera_dict.values()])
+        # If any camera is in calibration mode, close others
+        # (RealSense bandwidth is high, safer to run one at a time for calib)
+        close_all = any(
+            [cam.current_mode == "calibration" for cam in self.camera_dict.values()]
+        )
 
         if close_all:
             for curr_cam_id in self.camera_dict:
@@ -45,9 +44,9 @@ class MultiCameraWrapper:
         self.camera_dict[cam_id].set_calibration_mode()
 
     def set_trajectory_mode(self):
-        # If High Res Calibration, Close All #
+        # Close all if switching back from calibration
         close_all = any(
-            [cam.high_res_calibration and cam.current_mode == "calibration" for cam in self.camera_dict.values()]
+            [cam.current_mode == "calibration" for cam in self.camera_dict.values()]
         )
 
         if close_all:
@@ -60,11 +59,14 @@ class MultiCameraWrapper:
 
     ### Data Storing Functions ###
     def start_recording(self, recording_folderpath):
-        subdir = os.path.join(recording_folderpath, "SVO")
+        # --- CHANGED: Use 'Recordings' folder and .bag extension ---
+        subdir = os.path.join(recording_folderpath, "Recordings")
         if not os.path.isdir(subdir):
             os.makedirs(subdir)
+            
         for cam in self.camera_dict.values():
-            filepath = os.path.join(subdir, cam.serial_number + ".svo")
+            # RealSense driver handles the pipeline restart internally
+            filepath = os.path.join(subdir, cam.serial_number + ".bag")
             cam.start_recording(filepath)
 
     def stop_recording(self):
@@ -83,7 +85,13 @@ class MultiCameraWrapper:
         for cam_id in all_cam_ids:
             if not self.camera_dict[cam_id].is_running():
                 continue
-            data_dict, timestamp_dict = self.camera_dict[cam_id].read_camera()
+            
+            # Read Data
+            result = self.camera_dict[cam_id].read_camera()
+            if result is None: 
+                continue
+                
+            data_dict, timestamp_dict = result
 
             for key in data_dict:
                 full_obs_dict[key].update(data_dict[key])

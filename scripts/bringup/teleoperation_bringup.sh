@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# RUN THIS ON LAPTOP/WORKSTATION THAT RUNS LAPTOP_BRINGUP
+
 SESSION="teleoperation_bringup_tmux"
 
 # Check if the tmux session already exists

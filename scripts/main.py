@@ -14,7 +14,23 @@ parser.add_argument('--right_controller', action='store_true', help='Use right o
 args = parser.parse_args()
 
 # Make the robot env
-env = RobotEnv()
+res = (1280, 720)
+camera_kwargs = {
+    "hand_camera": {
+        "image": True,
+        "depth": True,
+        "resolution": res,
+        "resize_func": None, # Software resize if hardware bandwidth is an issue
+    },
+    "varied_camera": {
+        "image": True,
+        "depth": True,
+        "resolution": res,
+        "resize_func": None, # Software resize if hardware bandwidth is an issue
+    }
+}
+
+env = RobotEnv(camera_kwargs=camera_kwargs)
 
 if args.left_controller:
     controller = VRPolicy(right_controller=False)
