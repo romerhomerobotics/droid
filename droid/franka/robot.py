@@ -120,7 +120,8 @@ class FrankaRobot:
             command = gripper_delta + self.get_gripper_position()
 
         command = float(np.clip(command, 0, 1))
-        self._gripper.goto(width=self._max_gripper_width * (1 - command), speed=0.05, force=0.1, blocking=blocking)
+        #self._gripper.goto(width=self._max_gripper_width * (1 - command), speed=0.05, force=0.1, blocking=blocking)
+        self._gripper.grasp(speed = 0.05, force = 0.1, grasp_width = self._max_gripper_width * (1 - command), blocking = blocking)
 
     def add_noise_to_joints(self, original_joints, cartesian_noise):
         original_joints = torch.Tensor(original_joints)
