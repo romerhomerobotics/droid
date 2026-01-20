@@ -39,18 +39,26 @@ def validate_day_dir(day_dir: Path) -> bool:
 
 
 def validate_svo_existence(trajectory_dir: Path) -> bool:
-    svo_path = trajectory_dir / "recordings" / "SVO"
-    if svo_path.exists() and (len([p for p in svo_path.iterdir() if p.name.endswith(".svo")]) == 3):
-        return True
+    # Look for the 'Recordings' folder where your .bag files are stored
+    bag_path = trajectory_dir / "recordings" / "Recordings"
+    
+    # Check for .bag files instead of .svo
+    # Since you have 2 RealSense cameras, we check for exactly 2 files
+    if bag_path.exists():
+        bag_files = [p for p in bag_path.iterdir() if p.name.endswith(".bag")]
+        if len(bag_files) == 2:
+            return True
 
-    # Check Common Failure Mode --> files at `trajectory_dir / recordings / *.svo`
-    fallback_svo_path = trajectory_dir / "recordings"
-    if fallback_svo_path.exists() and (len([p for p in fallback_svo_path.iterdir() if p.name.endswith(".svo")]) == 3):
-        os.makedirs(svo_path, exist_ok=False)
-        svo_files = list([p for p in fallback_svo_path.iterdir() if p.name.endswith(".svo")])
-        for file in svo_files:
-            shutil.move(file, svo_path / file.name)
-        return len([p for p in svo_path.iterdir() if p.name.endswith(".svo")]) == 3
+    # Fallback: Check if they are just in the 'recordings' folder
+    fallback_path = trajectory_dir / "recordings"
+    if fallback_path.exists():
+        bag_files = [p for p in fallback_path.iterdir() if p.name.endswith(".bag")]
+        if len(bag_files) == 2:
+            # Move them to the expected subfolder if needed
+            os.makedirs(bag_path, exist_ok=True)
+            for file in bag_files:
+                shutil.move(str(file), str(bag_path / file.name))
+            return True
 
     return False
 

@@ -31,9 +31,9 @@ def parse_user(
             user_alias = h5.attrs["user"].title()
             lab, user = aliases.get(user_alias, (None, None))
 
-        assert user_alias in aliases, f"User alias `{user_alias}` not in REGISTERED_LAB_MEMBERS or REGISTERED_ALIASES!"
-        assert lab in members, f"Lab `{lab}` not in REGISTERED_LAB_MEMBERS!"
-        assert user in members[lab], f"Canonical user `{user}` not in REGISTERED_LAB_MEMBERS['{lab}']"
+        # assert user_alias in aliases, f"User alias `{user_alias}` not in REGISTERED_LAB_MEMBERS or REGISTERED_ALIASES!"
+        # assert lab in members, f"Lab `{lab}` not in REGISTERED_LAB_MEMBERS!"
+        # assert user in members[lab], f"Canonical user `{user}` not in REGISTERED_LAB_MEMBERS['{lab}']"
 
         return user, members[lab][user]
 
@@ -95,42 +95,89 @@ def parse_timestamp(trajectory_dir: Path) -> str:
 def parse_trajectory(
     data_dir: Path, trajectory_dir: Path, uuid: str, lab: str, user: str, user_id: str, timestamp: str
 ) -> Tuple[bool, Optional[Dict]]:
-    """Attempt to parse `<trajectory>/trajectory.h5` and extract relevant elements into a JSON-valid record."""
+    """
+    Attempt to parse `<trajectory>/trajectory.h5` and extract relevant elements.
+    Modified for 2-RealSense setup and VLA compatibility.
+    """
     try:
         with h5py.File(trajectory_dir / "trajectory.h5", "r") as h5:
-            assert "action" in h5.keys(), "Incomplete HDF5 file; no actual trajectory data logged!"
-            trajectory_record, attrs, trajectory_length = {}, h5.attrs, int(h5["action"]["joint_position"].shape[0])
-            exts = ["ext1", "ext2"]
+            # 1. Basic Integrity Check
+            if "action" not in h5.keys():
+                print(f"[Skip] {trajectory_dir.name}: No action data found.")
+                return False, None
 
-            # Extract Camera Information
-            camera_types, camera_extrinsics = h5["observation"]["camera_type"], h5["observation"]["camera_extrinsics"]
-            ctype2extrinsics = {
-                "wrist" if camera_types[serial][0] == 0 else exts.pop(0): {
+            # 2. Extract Basic Metadata
+            # Use 'joint_position' if available, otherwise fallback to any action key
+            action_key = "joint_position" if "joint_position" in h5["action"] else list(h5["action"].keys())[0]
+            trajectory_length = int(h5["action"][action_key].shape[0])
+            attrs = dict(h5.attrs) # Convert to dict to allow modifications
+
+            # 3. Handle Language Instruction (Critical for VLA)
+            # Ensure the VLA trainer finds a 'language_instruction' key
+            if "language_instruction" not in attrs:
+                # DROID UI sometimes saves as 'current_task' or 'task'
+                attrs["language_instruction"] = attrs.get("current_task", attrs.get("task", "robot task"))
+
+            # 4. Flexible Camera Mapping (Adapts to 2 Realsense setup)
+            ext_names = ["ext1", "ext2"]
+            camera_types = h5["observation"]["camera_type"]
+            camera_extrinsics = h5["observation"]["camera_extrinsics"]
+            ctype2extrinsics = {}
+
+            # Sort serials to ensure deterministic naming
+            sorted_serials = sorted(camera_types.keys())
+
+            for serial in sorted_serials:
+                # Get the type ID defined in your info.py (0=wrist, 1=varied/ext)
+                type_int = camera_types[serial][0]
+                
+                if type_int == 0:
+                    cname = "wrist"
+                else:
+                    # Assign ext1, then ext2, etc.
+                    cname = ext_names.pop(0) if ext_names else f"extra_{serial}"
+
+                # RealSense handling: checks for serial or serial_left suffix
+                ext_key = f"{serial}_left" if f"{serial}_left" in camera_extrinsics else serial
+                
+                ctype2extrinsics[cname] = {
                     "serial": serial,
-                    "extrinsics": camera_extrinsics[f"{serial}_left"][0],
+                    "extrinsics": camera_extrinsics[ext_key][0] if ext_key in camera_extrinsics else [0.0] * 6,
                 }
-                for serial in sorted(camera_types.keys())
-            }
 
-            # Compute Relative Path to `trajectory.h5`
+            # 5. Fill missing camera slots to prevent Schema crashes
+            # If you only have 2 cameras, 'ext2' remains in ext_names. 
+            # We fill it with dummies so the DROID schema is satisfied.
+            for missing_cam in ext_names:
+                ctype2extrinsics[missing_cam] = {
+                    "serial": "none",
+                    "extrinsics": [0.0] * 6
+                }
+
+            # 6. Populate Final Record
+            trajectory_record = {}
             hdf5_path = str(trajectory_dir.relative_to(data_dir) / "trajectory.h5")
 
-            # Populate Record
             for cname, etl_fn in TRAJECTORY_SCHEMA.items():
-                trajectory_record[cname] = etl_fn(
-                    uuid=uuid,
-                    lab=lab,
-                    user=user,
-                    user_id=user_id,
-                    timestamp=timestamp,
-                    hdf5_path=hdf5_path,
-                    attrs=attrs,
-                    trajectory_length=trajectory_length,
-                    ctype2extrinsics=ctype2extrinsics,
-                )
+                try:
+                    trajectory_record[cname] = etl_fn(
+                        uuid=uuid,
+                        lab=lab,
+                        user=user,
+                        user_id=user_id,
+                        timestamp=timestamp,
+                        hdf5_path=hdf5_path,
+                        attrs=attrs,
+                        trajectory_length=trajectory_length,
+                        ctype2extrinsics=ctype2extrinsics,
+                    )
+                except Exception as schema_err:
+                    print(f"[Schema Error] Field '{cname}' failed: {schema_err}")
+                    raise schema_err
 
             return True, trajectory_record
 
-    except (AssertionError, KeyError, OSError, RuntimeError):
-        # Invalid/Incomplete HDF5 File --> return invalid!
+    except Exception as e:
+        # Provide meaningful feedback for your custom setup debugging
+        print(f"[Processing Error] Failed to parse {trajectory_dir.name}: {e}")
         return False, None

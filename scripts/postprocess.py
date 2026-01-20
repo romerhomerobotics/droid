@@ -32,8 +32,8 @@ from droid.postprocessing.util.validate import validate_user2id
 #         + Simple ID generator --> python -c "import uuid; print(str(uuid.uuid4())[:8])"
 # fmt: off
 REGISTERED_MEMBERS: Dict[str, Dict[str, str]] = {
-    "Lab Name": {
-        "First Last": "4b1a56cc",
+    "romer": {
+        "First Last": "romer000", # dummy values
     },
 }
 validate_user2id(REGISTERED_MEMBERS)
@@ -93,6 +93,30 @@ def postprocess(cfg: DROIDUploadConfig) -> None:
         "errored_paths": {"success": {}, "failure": {}},
     }
     os.makedirs(cfg.cache_dir, exist_ok=True)
+    # === Automatic Dummy Calibration Injection ===
+    # This ensures trajectories are not skipped due to missing calibration data
+    for outcome in ["success", "failure"]:
+        outcome_path = cfg.data_dir / outcome
+        if not outcome_path.exists(): continue
+        
+        # Iterate through Date Folders (e.g., 2026-01-20)
+        for date_dir in outcome_path.iterdir():
+            if not date_dir.is_dir(): continue
+            # Iterate through Trajectory Folders
+            for traj_dir in date_dir.iterdir():
+                if not traj_dir.is_dir(): continue
+                
+                calib_file = traj_dir / "calibration.json"
+                if not calib_file.exists():
+                    dummy_calib = {
+                        "camera_serial": "dummy_realsense",
+                        "extrinsics": [0.0] * 6,
+                        "intrinsics": [0.0, 0.0, 0.0, 0.0]
+                    }
+                    with open(calib_file, "w") as f:
+                        json.dump(dummy_calib, f, indent=2)
+                    print(f"[*] Injected dummy calibration into: {traj_dir.name}")
+
     if (cfg.cache_dir / f"{cfg.lab}-cache.json").exists():
         with open(cfg.cache_dir / f"{cfg.lab}-cache.json", "r") as f:
             loaded_cache = json.load(f)

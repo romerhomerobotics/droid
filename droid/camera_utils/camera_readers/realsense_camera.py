@@ -1,8 +1,12 @@
 import pyrealsense2 as rs
 import numpy as np
 import cv2
+import logging
+import traceback
 from copy import deepcopy
 from droid.misc.time import time_ms
+
+logger = logging.getLogger(__name__)
 
 # Helper mapping for resize functions
 resize_func_map = {"cv2": cv2.resize, None: None}
@@ -42,7 +46,7 @@ class RealSenseCamera:
         
         # Default Hardware Parameters
         self.fps = 30
-        self.default_hw_res = (1280, 720)
+        self.default_hw_res = (640, 480)
         
         # Align object for mapping Depth to Color
         self.align = rs.align(rs.stream.color)
@@ -139,32 +143,38 @@ class RealSenseCamera:
         return deepcopy(self._intrinsics)
 
     def start_recording(self, filepath):
-        """
-        Restarts the pipeline to enable recording to a .bag file.
-        """
         if filepath.endswith('.svo'):
             filepath = filepath.replace('.svo', '.bag')
         
         print(f"Starting recording for {self.serial_number} -> {filepath}")
 
         if self.pipeline:
-            self.pipeline.stop()
+            self.stop_recording() # Ensure previous session is fully closed
         
+        self.config = rs.config()
+        self.config.enable_device(self.serial_number)
         self.config.enable_record_to_file(filepath)
+        
         self.pipeline = rs.pipeline()
+        # CRITICAL: Save the profile pointer
         self.profile = self.pipeline.start(self.config)
 
     def stop_recording(self):
         """
-        Stops the pipeline to safely close the .bag file.
+        Safely closes the .bag file by disposing of all RealSense pointers.
         """
         if self.pipeline:
             self.pipeline.stop()
+            
+        # CRITICAL: Explicitly delete these to trigger indexing
+        del self.profile
+        del self.pipeline
+        del self.config
         
-        self.config = rs.config()
-        self.config.enable_device(self.serial_number)
-        self.current_mode = "disabled"
+        self.profile = None
         self.pipeline = None
+        self.config = None
+        self.current_mode = "disabled"
 
     def read_camera(self):
         if self.skip_reading or self.current_mode == "disabled":
@@ -181,9 +191,15 @@ class RealSenseCamera:
             print(f"Frame drop or timeout on {self.serial_number}")
             return None
 
-        aligned_frames = self.align.process(frames)
-        color_frame = aligned_frames.get_color_frame()
-        depth_frame = aligned_frames.get_depth_frame()
+        try:
+            frames = self.align.process(frames)
+        except Exception as e:
+            logger.error(f"Error processing frames for {self.serial_number}: {e}", exc_info=True)
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            return None
+        
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
 
         if not color_frame or not depth_frame:
             return None

@@ -30,7 +30,7 @@ from droid.postprocessing.parse import parse_datetime, parse_timestamp, parse_tr
 from droid.postprocessing.util.svo2mp4 import convert_mp4s
 from droid.postprocessing.util.svo2depth import convert_depths
 from droid.postprocessing.util.validate import validate_day_dir, validate_metadata_record, validate_svo_existence
-
+from droid.postprocessing.util.bag_extraction import extract_and_sync_bags
 
 # === Stage 1 :: Indexing ===
 def run_indexing(
@@ -167,45 +167,41 @@ def run_processing(
 
             # Convert SVOs --> MP4s
             if extract_MP4_data:
-                valid_convert, vid_paths = convert_mp4s(
-                    data_dir,
-                    trajectory_dir,
-                    metadata_record["wrist_cam_serial"],
-                    metadata_record["ext1_cam_serial"],
-                    metadata_record["ext2_cam_serial"],
-                    metadata_record["ext1_cam_extrinsics"],
-                    metadata_record["ext2_cam_extrinsics"],
-                )
+                recordings_dir = trajectory_dir / "recordings" / "Recordings"
+                bag_files = list(recordings_dir.glob("*.bag"))
+                
+                valid_convert, vid_paths = extract_and_sync_bags(trajectory_dir, bag_files)
+                
                 if not valid_convert:
-                    errored_paths[outcome][rel_trajectory_dir] = "[Processing Error] Corrupted SVO / Failed Conversion"
+                    errored_paths[outcome][rel_trajectory_dir] = "[Processing Error] Bag Extraction Failed"
                     totals["errored"][outcome] = len(errored_paths[outcome])
                     continue
 
-                # Extend Metadata Record
+                # Add bag paths to the metadata record so indexing is happy
                 for key, vid_path in vid_paths.items():
                     metadata_record[key] = vid_path
 
-            # Convert SVOs --> Depth
+            # Convert Bags --> Depth (Replaces ZED svo2depth)
             if extract_depth_data:
-                valid_convert, vid_paths = convert_depths(
-                    data_dir,
-                    trajectory_dir,
-                    metadata_record["wrist_cam_serial"],
-                    metadata_record["ext1_cam_serial"],
-                    metadata_record["ext2_cam_serial"],
-                    metadata_record["ext1_cam_extrinsics"],
-                    metadata_record["ext2_cam_extrinsics"],
-                    resolution=depth_resolution,
-                    frequency=depth_frequency,
-                )
-                if not valid_convert:
-                    errored_paths[outcome][rel_trajectory_dir] = "[Processing Error] Corrupted SVO / Failed Conversion"
+                # We already extracted images above; we can just call the utility again
+                # or modify the previous call to set extract_depth=True.
+                # To be minimal, we simply ensure the previous call handled it.
+                
+                # Check if depth_paths were already populated in the metadata_record
+                # if not, we run the extraction with depth enabled.
+                recordings_dir = trajectory_dir / "recordings" / "Recordings"
+                bag_files = list(recordings_dir.glob("*.bag"))
+                
+                valid_depth, depth_info = extract_and_sync_bags(trajectory_dir, bag_files, extract_depth=True)
+                
+                if not valid_depth:
+                    errored_paths[outcome][rel_trajectory_dir] = "[Processing Error] Bag Depth Extraction Failed"
                     totals["errored"][outcome] = len(errored_paths[outcome])
                     continue
 
-                # Extend Metadata Record
-                for key, vid_path in vid_paths.items():
-                    metadata_record[key] = vid_path
+                # Associate paths in metadata so validate_metadata_record is happy
+                for key, path in depth_info.items():
+                    metadata_record[key] = path
 
             # Validate
             if not validate_metadata_record(metadata_record):

@@ -81,6 +81,8 @@ class RobotGUI(tk.Tk):
             self.frames[F] = F(container, self)
             self.frames[F].grid(row=0, column=0, sticky="nsew")
 
+        # self.ensure_dummy_calibration(self.cam_ids) # since we are currently skipping calibration, but DROID pipelines require a calibration file, we insert a dummy calibration file.
+
         # Listen For Robot Reset #
         self.enter_presses = 0
         self.bind("<KeyPress-Return>", self.robot_reset, add="+")
@@ -102,6 +104,38 @@ class RobotGUI(tk.Tk):
         self.show_frame(LoginPage)
         self.update_time_index()
         self.mainloop()
+
+    def ensure_dummy_calibration(cam_ids):
+        calib_path = "/home/robot/droid/droid/calibration/calibration_info.json"
+        data = {}
+        
+        # Load existing data if file exists
+        if os.path.exists(calib_path):
+            with open(calib_path, 'r') as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+
+        modified = False
+        for cid in cam_ids:
+            # DROID often checks for side-specific keys (e.g., _left). 
+            # For RealSense, we inject the serial directly or with a dummy suffix.
+            keys_to_check = [str(cid), f"{cid}_left", f"{cid}_right"]
+            
+            for key in keys_to_check:
+                if key not in data:
+                    # Inject a dummy identity pose [x, y, z, rx, ry, rz]
+                    data[key] = {
+                        "pose": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        "timestamp": time.time()
+                    }
+                    modified = True
+        
+        if modified:
+            with open(calib_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"[*] Automatically generated dummy calibration for: {cam_ids}")
 
     def show_frame(self, frame_id, refresh_page=True, wait=False):
         if time.time() - self.last_frame_change < 0.1:
@@ -714,6 +748,17 @@ class SceneConfigurationPage(tk.Frame):
         )
         collect_btn.place(relx=0.75, rely=0.68)
 
+        # Check Calibration Checkbox #
+        self.calib_var = BooleanVar()
+        self.calib_var.set(False)
+        calib_ckbox = tk.Checkbutton(
+            self,
+            text="Check Camera Calibration \n Before Collecting Trajectory",
+            font=Font(size=15),
+            variable=self.calib_var,
+        )
+        calib_ckbox.place(relx=0.73, rely=0.75)
+
         # Practice Button #
         practice_btn = tk.Button(
             self,
@@ -772,31 +817,31 @@ class SceneConfigurationPage(tk.Frame):
         self.controller.info["new_tasks"] = self.get_new_tasks()
 
     def finish_setup(self):
-        # Check tasks are filled out #
+        # 1. Update tasks from the UI components
+        self.controller.info["fixed_tasks"] = [task for task, val in self.task_dict.items() if val.get()]
+        self.controller.info["new_tasks"] = self.get_new_tasks()
+
+        # 2. Block if NO tasks are selected or written
         fixed_tasks = self.controller.info["fixed_tasks"]
         new_tasks = self.controller.info["new_tasks"]
+        
         if len(fixed_tasks) + len(new_tasks) == 0:
+            # Visual feedback for the user
             self.task_txt.delete("1.0", END)
-            self.task_txt.insert(1.0, no_tasks_text)
-            return
+            self.task_txt.insert(1.0, "!!! ERROR: YOU MUST ENTER A LANGUAGE INSTRUCTION !!!")
+            self.task_txt.config(background="red") # Optional: make it obvious
+            return # STOP the process here
+        else:
+            self.task_txt.config(background="white")
 
-        # Check that cameras are calibrated #
-        calib_info_dict = self.controller.robot.check_calibration_info(remove_hand_camera=True)
-        if len(calib_info_dict["missing"]) > 0:
-            self.controller.show_frame(IncompleteCalibration)
-            return
-        if len(calib_info_dict["old"]) > 0:
-            self.controller.show_frame(OldCalibration)
-            return
-
-        # Check that scene isn't stale #
-        last_scene_change = load_gui_info()["scene_id_timestamp"]
+        # 3. Handle scene staleness and proceed
+        last_scene_change = load_gui_info().get("scene_id_timestamp", 0)
         stale_scene = (time.time() - last_scene_change) > 3600
         if stale_scene:
             self.controller.show_frame(OldScene)
             return
 
-        # If everything is okay, proceed
+        # If everything is okay, proceed to the requested behavior page
         self.controller.show_frame(RequestedBehaviorPage)
 
     def mark_new_scene(self):
