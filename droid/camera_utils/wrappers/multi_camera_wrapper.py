@@ -58,7 +58,7 @@ class MultiCameraWrapper:
             cam.set_trajectory_mode()
 
     ### Data Storing Functions ###
-    def start_recording(self, recording_folderpath):
+    def start_recording(self, recording_folderpath, t0=None):
         # --- CHANGED: Use 'Recordings' folder and .bag extension ---
         subdir = os.path.join(recording_folderpath, "Recordings")
         if not os.path.isdir(subdir):
@@ -67,7 +67,7 @@ class MultiCameraWrapper:
         for cam in self.camera_dict.values():
             # RealSense driver handles the pipeline restart internally
             filepath = os.path.join(subdir, cam.serial_number + ".bag")
-            cam.start_recording(filepath)
+            cam.start_recording(filepath, t0=t0)
 
     def stop_recording(self):
         for cam in self.camera_dict.values():

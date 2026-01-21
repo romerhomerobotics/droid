@@ -3,7 +3,7 @@ import cv2
 import os
 
 # Update to the path where your droid_to_raw.py saved the data
-RAW_DIR = "/home/robot/vla_data/raw/100"
+RAW_DIR = "/home/robot/vla_data/raw/101"
 
 def inspect_raw():
     print(f"--- Inspecting Raw Output in: {RAW_DIR} ---\n")

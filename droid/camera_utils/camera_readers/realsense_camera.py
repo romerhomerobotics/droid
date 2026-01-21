@@ -39,21 +39,125 @@ class RealSenseCamera:
         self._intrinsics = {}
         self.profile = None
         
-        # Default Flags
+        # --- NEW: Pipeline Synchronization Fields ---
+        self.t0 = None
+        self.recorded_timestamps = []
+        self.bag_filepath = None
+        
+        # (Default flags and params remain unchanged)
         self.image = True
         self.depth = True
         self.skip_reading = False
-        
-        # Default Hardware Parameters
         self.fps = 30
-        self.default_hw_res = (640, 480)
-        
-        # Align object for mapping Depth to Color
+        self.default_hw_res = (1280, 720)
         self.align = rs.align(rs.stream.color)
-        
-        # Resizing utils
         self.resize_func = None
         self.resizer_resolution = (0, 0)
+
+    # ... (set_reading_parameters, set_trajectory_mode, set_calibration_mode remain unchanged) ...
+
+    def start_recording(self, filepath, t0=None):
+        """
+        Starts recording a .bag file and initializes timestamp caching.
+        """
+        if filepath.endswith('.svo'):
+            filepath = filepath.replace('.svo', '.bag')
+        
+        # Use provided t0 or default to now
+        if t0 is None:
+            raise ValueError("t0 must be provided to start_recording for timestamp alignment.")
+        self.t0 = t0
+        self.recorded_timestamps = []
+        self.bag_filepath = filepath
+        
+        print(f"Starting recording for {self.serial_number} -> {filepath}")
+
+        if self.pipeline:
+            self.stop_recording()
+        
+        self.config = rs.config()
+        self.config.enable_device(self.serial_number)
+        self.config.enable_record_to_file(filepath)
+        
+        self.pipeline = rs.pipeline()
+        self.profile = self.pipeline.start(self.config)
+
+    def stop_recording(self):
+        """
+        Closes the .bag file and saves the _rgb_timestamps.npy file for couple.py.
+        """
+        # Save timestamps before destroying the pipeline
+        if self.bag_filepath and len(self.recorded_timestamps) > 0:
+            ts_path = self.bag_filepath.replace(".bag", "_rgb_timestamps.npy")
+            # Save as float32 relative seconds to match FineTuningDataCollector
+            np.save(ts_path, np.array(self.recorded_timestamps, dtype=np.int32))
+            print(f"[*] Saved {len(self.recorded_timestamps)} timestamps to {ts_path}")
+
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except:
+                pass
+            
+        del self.profile
+        del self.pipeline
+        del self.config
+        
+        self.profile = None
+        self.pipeline = None
+        self.config = None
+        self.bag_filepath = None
+        self.current_mode = "disabled"
+
+    def read_camera(self):
+        """
+        Reads frames and caches timestamps relative to t0.
+        """
+        if self.skip_reading or self.current_mode == "disabled":
+            return {}, {}
+        
+        if self.pipeline is None:
+            return None
+
+        # Standard DROID timestamping
+        timestamp_dict = {self.serial_number + "_read_start": time_ms()}
+        
+        try:
+            frames = self.pipeline.wait_for_frames(timeout_ms=2000)
+            
+            # --- NEW: Capture System-Aligned Timestamp for your pipeline ---
+            color_frame = frames.get_color_frame()
+            if color_frame and self.t0 is not None:
+                # Use backend_timestamp (absolute system time in ms)
+                raw_ms = color_frame.get_frame_metadata(rs.frame_metadata_value.backend_timestamp)
+                rel_s = np.int32(raw_ms - self.t0)
+                self.recorded_timestamps.append(rel_s)
+
+        except RuntimeError:
+            print(f"Frame drop or timeout on {self.serial_number}")
+            return None
+
+        # (Existing alignment and processing logic)
+        try:
+            frames = self.align.process(frames)
+        except Exception as e:
+            logger.error(f"Error processing frames: {e}")
+            return None
+        
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+
+        if not color_frame or not depth_frame:
+            return None
+
+        timestamp_dict[self.serial_number + "_read_end"] = time_ms()
+        timestamp_dict[self.serial_number + "_frame_received"] = frames.get_timestamp() 
+
+        data_dict = {"image": {self.serial_number: self._process_frame(color_frame)}}
+        if self.depth:
+            data_dict["depth"] = {self.serial_number: self._process_frame(depth_frame)}
+
+        return data_dict, timestamp_dict
 
     def set_reading_parameters(
         self,
@@ -141,85 +245,6 @@ class RealSenseCamera:
     def get_intrinsics(self):
         """Returns the cached intrinsics for the current stream profile."""
         return deepcopy(self._intrinsics)
-
-    def start_recording(self, filepath):
-        if filepath.endswith('.svo'):
-            filepath = filepath.replace('.svo', '.bag')
-        
-        print(f"Starting recording for {self.serial_number} -> {filepath}")
-
-        if self.pipeline:
-            self.stop_recording() # Ensure previous session is fully closed
-        
-        self.config = rs.config()
-        self.config.enable_device(self.serial_number)
-        self.config.enable_record_to_file(filepath)
-        
-        self.pipeline = rs.pipeline()
-        # CRITICAL: Save the profile pointer
-        self.profile = self.pipeline.start(self.config)
-
-    def stop_recording(self):
-        """
-        Safely closes the .bag file by disposing of all RealSense pointers.
-        """
-        if self.pipeline:
-            self.pipeline.stop()
-            
-        # CRITICAL: Explicitly delete these to trigger indexing
-        del self.profile
-        del self.pipeline
-        del self.config
-        
-        self.profile = None
-        self.pipeline = None
-        self.config = None
-        self.current_mode = "disabled"
-
-    def read_camera(self):
-        if self.skip_reading or self.current_mode == "disabled":
-            return {}, {}
-        
-        if self.pipeline is None:
-            return None
-
-        timestamp_dict = {self.serial_number + "_read_start": time_ms()}
-        
-        try:
-            frames = self.pipeline.wait_for_frames(timeout_ms=2000)
-        except RuntimeError:
-            print(f"Frame drop or timeout on {self.serial_number}")
-            return None
-
-        try:
-            frames = self.align.process(frames)
-        except Exception as e:
-            logger.error(f"Error processing frames for {self.serial_number}: {e}", exc_info=True)
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-            return None
-        
-        color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame()
-
-        if not color_frame or not depth_frame:
-            return None
-
-        timestamp_dict[self.serial_number + "_read_end"] = time_ms()
-        timestamp_dict[self.serial_number + "_frame_received"] = frames.get_timestamp() 
-
-        data_dict = {}
-        if self.image:
-            # Use only serial_number for consistent key matching in test scripts
-            data_dict["image"] = {
-                self.serial_number: self._process_frame(color_frame)
-            }
-        
-        if self.depth:
-            data_dict["depth"] = {
-                self.serial_number: self._process_frame(depth_frame)
-            }
-
-        return data_dict, timestamp_dict
 
     def _process_frame(self, frame):
         img = np.asanyarray(frame.get_data())

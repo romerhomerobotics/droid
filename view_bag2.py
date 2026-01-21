@@ -2,7 +2,7 @@ import pyrealsense2 as rs
 import numpy as np
 import os
 
-DIR = "/home/robot/droid/data/success/2026-01-20/Tue_Jan_20_12:29:42_2026/recordings/Recordings/"
+DIR = "/home/robot/droid/data/success/2026-01-20/Tue_Jan_20_14:23:01_2026/recordings/Recordings"
 BAG_FILES = sorted([f for f in os.listdir(DIR) if f.endswith('.bag')])
 
 def rigorous_validation(bag_path):

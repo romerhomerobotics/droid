@@ -57,7 +57,7 @@ def collect_trajectory(
     if save_filepath:
         traj_writer = TrajectoryWriter(save_filepath, metadata=metadata, save_images=save_images)
     if recording_folderpath:
-        env.camera_reader.start_recording(recording_folderpath)
+        env.camera_reader.start_recording(recording_folderpath, t0=time_ms())
 
     # Prepare For Trajectory #
     num_steps = 0
