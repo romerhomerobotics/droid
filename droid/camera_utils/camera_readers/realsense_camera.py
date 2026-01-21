@@ -5,6 +5,7 @@ import logging
 import traceback
 from copy import deepcopy
 from droid.misc.time import time_ms
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,9 @@ class RealSenseCamera:
         
         # --- NEW: Pipeline Synchronization Fields ---
         self.t0 = None
-        self.recorded_timestamps = []
-        self.bag_filepath = None
+        self.recording_dir = None
+        self.frame_buffer = []  # <--- Buffer for (timestamp, image)
+        self.recording_active = False
         
         # (Default flags and params remain unchanged)
         self.image = True
@@ -54,122 +56,100 @@ class RealSenseCamera:
         self.resize_func = None
         self.resizer_resolution = (0, 0)
 
-    def start_recording(self, filepath, t0=None):
+    def start_recording(self, recording_dir, t0=None):
             """
-            Starts recording a .bag file and initializes timestamp caching.
+            Starts buffering frames to RAM.
             """
-            # Stop existing pipeline if running (this sets mode="disabled")
-            if self.pipeline:
-                self.stop_recording()
-            
-            if filepath.endswith('.svo'):
-                filepath = filepath.replace('.svo', '.bag')
-            
             if t0 is None:
-                raise ValueError("t0 must be provided to start_recording for timestamp alignment.")
+                raise ValueError("t0 must be provided.")
             
             self.t0 = t0
-            self.recorded_timestamps = []
-            self.bag_filepath = filepath
+            if recording_dir.endswith('.bag') or recording_dir.endswith('.svo'):
+                self.recording_dir = os.path.dirname(recording_dir)
+            else:
+                self.recording_dir = recording_dir
+            self.frame_buffer = [] # Clear previous buffer
+            self.recording_active = True
             
-            print(f"Starting recording for {self.serial_number} -> {filepath}")
-
+            print(f"[{self.serial_number}] Buffering started (RAM).")
             
-            self.config = rs.config()
-            self.config.enable_device(self.serial_number)
-            self.config.enable_record_to_file(filepath)
-            
-            # Configure streams (Must match your desired resolution/fps)
-            w, h = self.hw_resolution if hasattr(self, 'hw_resolution') else (1280, 720)
-            self.config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, self.fps)
-            self.config.enable_stream(rs.stream.depth, w, h, rs.format.z16, self.fps)
-
-            self.pipeline = rs.pipeline()
-            self.profile = self.pipeline.start(self.config)
-            
-            # --- CRITICAL FIX: Re-enable the camera mode ---
-            self.current_mode = "trajectory" 
+            # Ensure pipeline is running
+            if not self.pipeline:
+                self._configure_pipeline()
+                self.current_mode = "trajectory"
         # -----------------------------------------------
 
-    def stop_recording(self):
-        """
-        Closes the .bag file and saves the _rgb_timestamps.npy file for couple.py.
-        """
-        print(f"stop_recording for {self.serial_number}")
-        # Save timestamps before destroying the pipeline
-        print(self.bag_filepath, "recorded_timestamps.shape:", np.array(self.recorded_timestamps).shape)
-        if self.bag_filepath and len(self.recorded_timestamps) > 0:
-            print("within if - stop_recording for {self.serial_number}")
-            ts_path = self.bag_filepath.replace(".bag", "_rgb_timestamps.npy")
-            # Save as float32 relative seconds to match FineTuningDataCollector
-            np.save(ts_path, np.array(self.recorded_timestamps, dtype=np.int32))
-            print(f"[*] Saved {len(self.recorded_timestamps)} timestamps to {ts_path}")
-
-        if self.pipeline:
-            try:
-                self.pipeline.stop()
-            except:
-                pass
-            
-        del self.profile
-        del self.pipeline
-        del self.config
-        
-        self.profile = None
-        self.pipeline = None
-        self.config = None
-        self.bag_filepath = None
-        self.current_mode = "disabled"
-
     def read_camera(self):
-        """
-        Reads frames and caches timestamps relative to t0.
-        """
+        print(f"read_camera start: Reading from RealSense {self.serial_number}...")
         if self.skip_reading or self.current_mode == "disabled":
             return {}, {}
         
         if self.pipeline is None:
             return None
 
-        # Standard DROID timestamping
-        timestamp_dict = {self.serial_number + "_read_start": time_ms()}
-        
+        t_start = time_ms() # Capture start time
+
         try:
-            frames = self.pipeline.wait_for_frames(timeout_ms=2000)
+            # Increased timeout slightly to ensure we don't drop frames unnecessarily 
+            frames = self.pipeline.wait_for_frames(timeout_ms=100)
             
-            # --- NEW: Capture System-Aligned Timestamp for your pipeline ---
             color_frame = frames.get_color_frame()
-            if color_frame and self.t0 is not None:
-                # Use backend_timestamp (absolute system time in ms)
-                raw_ms = color_frame.get_frame_metadata(rs.frame_metadata_value.backend_timestamp)
-                rel_s = np.int32(raw_ms - self.t0)
-                self.recorded_timestamps.append(rel_s)
+            if color_frame:
+                # FIX 1: Use .copy() so Python owns the data, not the RS circular buffer
+                c_img = np.asanyarray(color_frame.get_data()).copy()
+                
+                if self.recording_active and self.t0 is not None:
+                    rel_s = (t_start - self.t0) / 1000.0 
+                    self.frame_buffer.append((rel_s, c_img))
+            
+            # FIX 2: Call time_ms() again for read_end, otherwise it's identical to start
+            t_end = time_ms()
+            
+            timestamp_dict = {
+                self.serial_number + "_read_start": t_start,
+                self.serial_number + "_read_end": t_end,
+                self.serial_number + "_frame_received": frames.get_timestamp()
+            }
+            print(f"timestamp_dict: {timestamp_dict}")
 
-        except RuntimeError:
-            print(f"Frame drop or timeout on {self.serial_number}")
+            data_dict = {"image": {self.serial_number: self._process_frame(color_frame)}}
+            return data_dict, timestamp_dict
+
+        except RuntimeError as e:
+            print(f"Error reading frames from RealSense {self.serial_number}: {e}")
             return None
 
-        # (Existing alignment and processing logic)
-        try:
-            frames = self.align.process(frames)
-        except Exception as e:
-            logger.error(f"Error processing frames: {e}")
-            return None
-        
-        color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame()
+    def stop_recording(self):
+        self.recording_active = False
+        if not self.frame_buffer: return
 
-        if not color_frame or not depth_frame:
-            return None
+        print(f"[{self.serial_number}] Saving {len(self.frame_buffer)} frames...")
+        os.makedirs(self.recording_dir, exist_ok=True)
 
-        timestamp_dict[self.serial_number + "_read_end"] = time_ms()
-        timestamp_dict[self.serial_number + "_frame_received"] = frames.get_timestamp() 
+        timestamps = [f[0] for f in self.frame_buffer]
+        frames = [f[1] for f in self.frame_buffer]
 
-        data_dict = {"image": {self.serial_number: self._process_frame(color_frame)}}
-        if self.depth:
-            data_dict["depth"] = {self.serial_number: self._process_frame(depth_frame)}
+        if frames:
+            # FIX 3: Calculate Actual FPS based on recorded duration
+            duration = timestamps[-1] - timestamps[0]
+            actual_fps = len(frames) / duration if duration > 0 else self.fps
+            print(f"Detected FPS: {actual_fps:.2f} (Target was {self.fps})")
 
-        return data_dict, timestamp_dict
+            ts_path = os.path.join(self.recording_dir, f"{self.serial_number}_timestamps.npy")
+            np.save(ts_path, np.array(timestamps, dtype=np.float32))
+
+            h, w = frames[0].shape[:2]
+            vid_path = os.path.join(self.recording_dir, f"{self.serial_number}_color.mp4")
+            
+            # Use actual_fps to ensure playback speed matches reality
+            vw = cv2.VideoWriter(vid_path, cv2.VideoWriter_fourcc(*'mp4v'), actual_fps, (w, h))
+            for f in frames:
+                vw.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+            vw.release()
+            print(f"[{self.serial_number}] Saved successfully.")
+
+        self.frame_buffer = []
+
 
     def set_reading_parameters(
         self,

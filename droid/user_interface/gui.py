@@ -1149,9 +1149,9 @@ class CameraPage(tk.Frame):
                 self.image_boxes.append(button)
 
                 # Start Image Thread #
-                camera_thread = threading.Thread(target=lambda idx=(i * self.n_cols + j): self.update_camera_feed(idx))
-                camera_thread.daemon = True
-                camera_thread.start()
+                # camera_thread = threading.Thread(target=lambda idx=(i * self.n_cols + j): self.update_camera_feed(idx))
+                # camera_thread.daemon = True
+                # camera_thread.start()
 
     def update_image_grid(self, i):
         if self.clicked_id is None:
