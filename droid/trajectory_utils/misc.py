@@ -48,6 +48,8 @@ def collect_trajectory(
     if save_images:
         assert save_filepath is not None
 
+    t0=time_ms()
+
     # Reset States #
     if controller is not None:
         controller.reset_state()
@@ -57,78 +59,85 @@ def collect_trajectory(
     if save_filepath:
         traj_writer = TrajectoryWriter(save_filepath, metadata=metadata, save_images=save_images)
     if recording_folderpath:
-        env.camera_reader.start_recording(recording_folderpath, t0=time_ms())
+        env.camera_reader.start_recording(recording_folderpath, t0=t0)
 
     # Prepare For Trajectory #
     num_steps = 0
     if reset_robot:
         env.reset(randomize=randomize_reset)
 
-    # Begin! #
-    while True:
-        # Collect Miscellaneous Info #
-        controller_info = {} if (controller is None) else controller.get_info()
-        skip_action = wait_for_controller and (not controller_info["movement_enabled"])
-        control_timestamps = {"step_start": time_ms()}
+    try:
+        # Begin! #
+        while True:
+            # Collect Miscellaneous Info #
+            controller_info = {} if (controller is None) else controller.get_info()
+            skip_action = wait_for_controller and (not controller_info["movement_enabled"])
+            control_timestamps = {"step_start": time_ms()-t0}
 
-        # Get Observation #
-        obs = env.get_observation()
-        if obs_pointer is not None:
-            obs_pointer.update(obs)
-        obs["controller_info"] = controller_info
-        obs["timestamp"]["skip_action"] = skip_action
+            # Get Observation #
+            obs = env.get_observation()
+            if obs_pointer is not None:
+                obs_pointer.update(obs)
+            obs["controller_info"] = controller_info
+            obs["timestamp"]["skip_action"] = skip_action
 
-        # Get Action #
-        control_timestamps["policy_start"] = time_ms()
-        if policy is None:
-            action, controller_action_info = controller.forward(obs, include_info=True)
-        else:
-            action = policy.forward(obs)
-            controller_action_info = {}
+            # Get Action #
+            control_timestamps["policy_start"] = time_ms()-t0
+            if policy is None:
+                action, controller_action_info = controller.forward(obs, include_info=True)
+            else:
+                action = policy.forward(obs)
+                controller_action_info = {}
 
-        # Regularize Control Frequency #
-        control_timestamps["sleep_start"] = time_ms()
-        comp_time = time_ms() - control_timestamps["step_start"]
-        sleep_left = (1 / env.control_hz) - (comp_time / 1000)
-        if sleep_left > 0:
-            time.sleep(sleep_left)
+            # Regularize Control Frequency #
+            control_timestamps["sleep_start"] = time_ms()-t0
+            comp_time = time_ms() - control_timestamps["step_start"]
+            sleep_left = (1 / env.control_hz) - (comp_time / 1000)
+            if sleep_left > 0:
+                time.sleep(sleep_left)
 
-        # Moniter Control Frequency #
-        # moniter_control_frequency = True
-        # if moniter_control_frequency:
-        # 	print('Sleep Left: ', sleep_left)
-        # 	print('Feasible Hz: ', (1000 / comp_time))
+            # Moniter Control Frequency #
+            # moniter_control_frequency = True
+            # if moniter_control_frequency:
+            # 	print('Sleep Left: ', sleep_left)
+            # 	print('Feasible Hz: ', (1000 / comp_time))
 
-        # Step Environment #
-        control_timestamps["control_start"] = time_ms()
-        if skip_action:
-            action_info = env.create_action_dict(np.zeros_like(action))
-        else:
-            action_info = env.step(action)
-        action_info.update(controller_action_info)
+            # Step Environment #
+            control_timestamps["control_start"] = time_ms()-t0
+            if skip_action:
+                action_info = env.create_action_dict(np.zeros_like(action))
+            else:
+                action_info = env.step(action)
+            action_info.update(controller_action_info)
 
-        # Save Data #
-        control_timestamps["step_end"] = time_ms()
-        obs["timestamp"]["control"] = control_timestamps
-        timestep = {"observation": obs, "action": action_info}
-        if save_filepath:
-            traj_writer.write_timestep(timestep)
-
-        # Check Termination #
-        num_steps += 1
-        if horizon is not None:
-            end_traj = horizon == num_steps
-        else:
-            end_traj = controller_info["success"] or controller_info["failure"]
-
-        # Close Files And Return #
-        if end_traj:
-            if recording_folderpath:
-                env.camera_reader.stop_recording()
+            # Save Data #
+            control_timestamps["step_end"] = time_ms()-t0
+            obs["timestamp"]["control"] = control_timestamps
+            timestep = {"observation": obs, "action": action_info}
             if save_filepath:
-                traj_writer.close(metadata=controller_info)
-            return controller_info
+                traj_writer.write_timestep(timestep)
 
+            # Check Termination #
+            num_steps += 1
+            if horizon is not None:
+                end_traj = horizon == num_steps
+            else:
+                end_traj = controller_info["success"] or controller_info["failure"]
+
+            if end_traj:
+                break
+    finally:
+        # This block ALWAYS runs, even if script crashes or you Ctrl+C
+        print("Closing recordings and saving data...")
+        if recording_folderpath:
+            print("Will stop recording")
+            env.camera_reader.stop_recording() # <--- Saves .npy and closes .bag
+            print("stopped recording")
+        if save_filepath:
+            traj_writer.close(metadata=controller_info)
+        print("Closing data saved.")
+            
+    return controller_info
 
 def calibrate_camera(
     env,

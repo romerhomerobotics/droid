@@ -54,40 +54,52 @@ class RealSenseCamera:
         self.resize_func = None
         self.resizer_resolution = (0, 0)
 
-    # ... (set_reading_parameters, set_trajectory_mode, set_calibration_mode remain unchanged) ...
-
     def start_recording(self, filepath, t0=None):
-        """
-        Starts recording a .bag file and initializes timestamp caching.
-        """
-        if filepath.endswith('.svo'):
-            filepath = filepath.replace('.svo', '.bag')
-        
-        # Use provided t0 or default to now
-        if t0 is None:
-            raise ValueError("t0 must be provided to start_recording for timestamp alignment.")
-        self.t0 = t0
-        self.recorded_timestamps = []
-        self.bag_filepath = filepath
-        
-        print(f"Starting recording for {self.serial_number} -> {filepath}")
+            """
+            Starts recording a .bag file and initializes timestamp caching.
+            """
+            # Stop existing pipeline if running (this sets mode="disabled")
+            if self.pipeline:
+                self.stop_recording()
+            
+            if filepath.endswith('.svo'):
+                filepath = filepath.replace('.svo', '.bag')
+            
+            if t0 is None:
+                raise ValueError("t0 must be provided to start_recording for timestamp alignment.")
+            
+            self.t0 = t0
+            self.recorded_timestamps = []
+            self.bag_filepath = filepath
+            
+            print(f"Starting recording for {self.serial_number} -> {filepath}")
 
-        if self.pipeline:
-            self.stop_recording()
-        
-        self.config = rs.config()
-        self.config.enable_device(self.serial_number)
-        self.config.enable_record_to_file(filepath)
-        
-        self.pipeline = rs.pipeline()
-        self.profile = self.pipeline.start(self.config)
+            
+            self.config = rs.config()
+            self.config.enable_device(self.serial_number)
+            self.config.enable_record_to_file(filepath)
+            
+            # Configure streams (Must match your desired resolution/fps)
+            w, h = self.hw_resolution if hasattr(self, 'hw_resolution') else (1280, 720)
+            self.config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, self.fps)
+            self.config.enable_stream(rs.stream.depth, w, h, rs.format.z16, self.fps)
+
+            self.pipeline = rs.pipeline()
+            self.profile = self.pipeline.start(self.config)
+            
+            # --- CRITICAL FIX: Re-enable the camera mode ---
+            self.current_mode = "trajectory" 
+        # -----------------------------------------------
 
     def stop_recording(self):
         """
         Closes the .bag file and saves the _rgb_timestamps.npy file for couple.py.
         """
+        print(f"stop_recording for {self.serial_number}")
         # Save timestamps before destroying the pipeline
+        print(self.bag_filepath, "recorded_timestamps.shape:", np.array(self.recorded_timestamps).shape)
         if self.bag_filepath and len(self.recorded_timestamps) > 0:
+            print("within if - stop_recording for {self.serial_number}")
             ts_path = self.bag_filepath.replace(".bag", "_rgb_timestamps.npy")
             # Save as float32 relative seconds to match FineTuningDataCollector
             np.save(ts_path, np.array(self.recorded_timestamps, dtype=np.int32))
