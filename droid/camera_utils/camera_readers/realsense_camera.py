@@ -144,7 +144,7 @@ class RealSenseCamera:
             # Use actual_fps to ensure playback speed matches reality
             vw = cv2.VideoWriter(vid_path, cv2.VideoWriter_fourcc(*'mp4v'), actual_fps, (w, h))
             for f in frames:
-                vw.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+                vw.write(f)
             vw.release()
             print(f"[{self.serial_number}] Saved successfully.")
 
