@@ -2,6 +2,7 @@ import h5py
 import numpy as np
 import os
 import shutil
+import argparse
 from scipy.spatial.transform import Rotation as R
 
 def bridge_to_raw(droid_dir, output_episode_dir):
@@ -39,8 +40,8 @@ def bridge_to_raw(droid_dir, output_episode_dir):
 
     # 2. Process Cameras (Rename & Move)
     cam_mapping = {
-        "022422070872": "wrist",
-        "135622077246": "ext1"
+        "022422070872": "ext1",
+        "135622077246": "wrist"
     }
 
     for serial, role in cam_mapping.items():
@@ -72,3 +73,36 @@ if __name__ == "__main__":
         "/home/robot/droid/data/success/2026-01-21/Wed_Jan_21_12:43:17_2026/", 
         "/home/robot/vla_data/raw/106"
     )
+
+def batch_process_droid(droid_dir, output_dir):
+    """Gathers all droid-teleop sample folders under droid_dir and converts them into numbered outputs saved under output_dir. """
+    # Find all subdirectories that contain a trajectory.h5 file
+    # Sorting ensures that the 1...n numbering is deterministic
+    samples = sorted([
+        os.path.join(droid_dir, d) for d in os.listdir(droid_dir)
+        if os.path.isdir(os.path.join(droid_dir, d))
+    ])
+    
+    print(f"Found {len(samples)} potential samples in {droid_dir}")
+    
+    count = 0
+    for i, sample_path in enumerate(samples, start=1):
+        # Create output path: /home/robot/vla_data/output_dir/i
+        output_path = os.path.join("", output_dir, str(i))
+        
+        success = bridge_to_raw(sample_path, output_path)
+        if success:
+            count += 1
+            
+    print(f"\nBatch processing complete. Successfully converted {count}/{len(samples)} samples.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Batch convert DROID samples to Raw VLA format.")
+    parser.add_argument("--droid_dir", type=str, required=True, 
+                        help="Path to the directory containing DROID sample folders.")
+    parser.add_argument("--output_dir", type=str, required=True, 
+                        help="The name to use for the output folder (e.g., 'success_2026_01_21').")
+
+    args = parser.parse_args()
+    
+    batch_process_droid(args.droid_dir, args.output_dir)
