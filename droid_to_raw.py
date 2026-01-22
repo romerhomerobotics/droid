@@ -67,12 +67,12 @@ def bridge_to_raw(droid_dir, output_episode_dir):
 
     print(f"[*] Success: Raw data generated in {output_episode_dir}")
 
-if __name__ == "__main__":
-    # Update paths as needed
-    bridge_to_raw(
-        "/home/robot/droid/data/success/2026-01-21/Wed_Jan_21_12:43:17_2026/", 
-        "/home/robot/vla_data/raw/106"
-    )
+#if __name__ == "__main__":
+#    # Update paths as needed
+#    bridge_to_raw(
+#        "/home/robot/droid/data/success/2026-01-21/Wed_Jan_21_12:43:17_2026/", 
+#        "/home/robot/vla_data/raw/106"
+#    )
 
 def batch_process_droid(droid_dir, output_dir):
     """Gathers all droid-teleop sample folders under droid_dir and converts them into numbered outputs saved under output_dir. """
