@@ -5,7 +5,7 @@ import sys
 
 # --- CONFIGURATION ---
 # Path to the specific episode folder you want to validate
-EPISODE_DIR = "/home/robot/vla_data/raw/106" 
+EPISODE_DIR = "/home/robot/vla_data/teleop_succes_1/1" 
 # ---------------------
 
 def analyze_timestamps(name, file_path, column_idx=None):
@@ -87,6 +87,30 @@ def main():
     # --- 2. Check Action Timestamps ---
     print("\n[2] ACTION DATA ANALYSIS")
     eef_poses = analyze_timestamps("eef_poses.npy", os.path.join(EPISODE_DIR, "eef_poses.npy"))
+    # --- 2. Check Action Timestamps ---
+    print("\n[2] ACTION DATA ANALYSIS")
+    eef_poses = analyze_timestamps("eef_poses.npy", os.path.join(EPISODE_DIR, "eef_poses.npy"))
+    
+    # --- [UPDATE START] APPLY DEBUG ROTATION ---
+    if eef_poses is not None:
+        from scipy.spatial.transform import Rotation as R
+        print("🛠️ DEBUG: Applying +45 deg Z-axis correction to EEF poses...")
+        
+        # 1. Extract existing quaternions (columns 4,5,6,7 -> x,y,z,w)
+        current_rot = R.from_quat(eef_poses[:, 4:8])
+        
+        # 2. Create correction rotation (45 degrees around Z)
+        # Change 45 to -45 if the rotation is in the opposite direction
+        correction = R.from_euler('z', 45, degrees=True)
+        
+        # 3. Apply correction (Global Frame: Correction * Current)
+        new_rot = correction * current_rot
+        
+        # 4. Overwrite data in memory
+        eef_poses[:, 4:8] = new_rot.as_quat()
+    # --- [UPDATE END] --------------------------
+
+    analyze_timestamps("gripper_positions.npy", os.path.join(EPISODE_DIR, "gripper_positions.npy"))
     analyze_timestamps("gripper_positions.npy", os.path.join(EPISODE_DIR, "gripper_positions.npy"))
     analyze_timestamps("joint_states.npy", os.path.join(EPISODE_DIR, "joint_states.npy"))
     print("-" * 50)
@@ -182,57 +206,68 @@ def main():
     print(f"Processing {max_frames} frames...")
 
     while frame_idx < max_frames:
-        # Read next frames
-        if cap_w:
-            ret_w, fw = cap_w.read()
-            if ret_w: frame_w = fw
-        if cap_e:
-            ret_e, fe = cap_e.read()
-            if ret_e: frame_e = cv2.resize(fe, (W, H))
+            # --- 1. Read Master Frame (Wrist) ---
+            if cap_w:
+                ret_w, fw = cap_w.read()
+                if not ret_w: break
+                frame_w = fw
+            
+            # --- 2. Get Master Time ---
+            # Safe access to wrist timestamp
+            t_current = wrist_ts[frame_idx] if (wrist_ts is not None and frame_idx < len(wrist_ts)) else 0.0
 
-        # Get Timestamps (handle indices out of bounds)
-        t_wrist = wrist_ts[frame_idx] if frame_idx < len_w else -1.0
-        t_ext1 = ext1_ts[frame_idx] if frame_idx < len_e else -1.0
+            # --- 3. Sync Ext1 (Slave) to Master Time ---
+            if cap_e:
+                # Find which frame index in Ext1 is closest to t_current
+                if ext1_ts is not None and len(ext1_ts) > 0:
+                    match_idx = find_nearest_idx(ext1_ts, t_current)
+                    # Seek video to that specific frame
+                    cap_e.set(cv2.CAP_PROP_POS_FRAMES, match_idx)
+                    
+                ret_e, fe = cap_e.read()
+                if ret_e:
+                    frame_e = cv2.resize(fe, (W, H))
 
-        # Get EEF Pose (Nearest Neighbor)
-        eef_str = "EEF: N/A"
-        if eef_poses is not None:
-            # Use valid timestamp (prefer wrist, then ext1)
-            t_query = t_wrist if t_wrist >= 0 else t_ext1
-            if t_query >= 0:
-                eef_idx = find_nearest_idx(eef_poses[:, 0], t_query)
+            # --- 4. Robot State Lookup (Same as before) ---
+            eef_str = "EEF: N/A"
+            if eef_poses is not None and t_current > 0:
+                eef_idx = find_nearest_idx(eef_poses[:, 0], t_current)
                 if 0 <= eef_idx < len(eef_poses):
                     p = eef_poses[eef_idx]
                     eef_str = (f"EEF (t={p[0]:.3f}s): "
-                               f"Pos=[{p[1]:.3f}, {p[2]:.3f}, {p[3]:.3f}] "
-                               f"Rot=[{p[4]:.2f}, {p[5]:.2f}, {p[6]:.2f}, {p[7]:.2f}]")
+                            f"Pos=[{p[1]:.3f}, {p[2]:.3f}, {p[3]:.3f}] "
+                            f"Rot=[{p[4]:.2f}, {p[5]:.2f}, {p[6]:.2f}, {p[7]:.2f}]")
 
-        # Create Canvas
-        canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-        
-        # Draw Header
-        cv2.rectangle(canvas, (0, 0), (canvas_w, HEADER_H), (30, 30, 30), -1)
-        cv2.putText(canvas, eef_str, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(canvas, f"Frame: {frame_idx}", (30, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1)
+            # --- 5. Draw Canvas ---
+            canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+            
+            # Header
+            cv2.rectangle(canvas, (0, 0), (canvas_w, HEADER_H), (30, 30, 30), -1)
+            cv2.putText(canvas, eef_str, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(canvas, f"Frame: {frame_idx} (Time: {t_current:.3f}s)", (30, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1)
 
-        # Place Images
-        canvas[HEADER_H:, 0:W] = frame_w
-        canvas[HEADER_H:, W:2*W] = frame_e
+            # Images
+            canvas[HEADER_H:, 0:W] = frame_w
+            canvas[HEADER_H:, W:2*W] = frame_e
 
-        # Overlay Timestamps
-        color_w = (0, 255, 0) if t_wrist >= 0 else (0, 0, 255)
-        color_e = (0, 255, 0) if t_ext1 >= 0 else (0, 0, 255)
-        
-        cv2.putText(canvas, f"WRIST: {t_wrist:.4f}s", (20, HEADER_H + 40), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_w, 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"EXT1: {t_ext1:.4f}s", (W + 20, HEADER_H + 40), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_e, 2, cv2.LINE_AA)
+            # Timestamps
+            t_ext_disp = ext1_ts[match_idx] if (cap_e and ext1_ts is not None and len(ext1_ts) > 0) else -1.0
+            
+            cv2.putText(canvas, f"WRIST: {t_current:.4f}s", (20, HEADER_H + 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2, cv2.LINE_AA)
+            
+            # Color ext1 timestamp red if diff > 0.1s to warn of sync issues
+            diff = abs(t_current - t_ext_disp)
+            col_e = (0, 255, 0) if diff < 0.1 else (0, 0, 255)
+            
+            cv2.putText(canvas, f"EXT1: {t_ext_disp:.4f}s", (W + 20, HEADER_H + 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, col_e, 2, cv2.LINE_AA)
 
-        out.write(canvas)
-        frame_idx += 1
-        
-        if frame_idx % 50 == 0:
-            print(f" -> {frame_idx}/{max_frames}", end='\r')
+            out.write(canvas)
+            frame_idx += 1
+            
+            if frame_idx % 50 == 0:
+                print(f" -> {frame_idx}/{max_frames}", end='\r')
 
     if cap_w: cap_w.release()
     if cap_e: cap_e.release()
