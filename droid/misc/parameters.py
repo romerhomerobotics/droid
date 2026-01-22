@@ -10,8 +10,8 @@ robot_type = "panda"  # 'panda' or 'fr3'
 robot_serial_number = "295341-1324423"
 
 # Camera ID's #
-hand_camera_id = ""
-varied_camera_1_id = ""
+hand_camera_id = "135622077246" 
+varied_camera_1_id = "022422070872"
 varied_camera_2_id = ""
 
 # Charuco Board Params #

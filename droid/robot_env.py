@@ -24,11 +24,11 @@ class RobotEnv(gym.Env):
         self.check_action_range = "velocity" in action_space
 
         # Robot Configuration
-        self.reset_joints = np.array([0, -1 / 5 * np.pi, 0, -4 / 5 * np.pi, 0, 3 / 5 * np.pi, 0.0])
+        self.reset_joints = np.array([0, -1 / 5 * np.pi, 0, -4 / 5 * np.pi, 0, 3 / 5 * np.pi, 0.0]) # np.array([-0.0361, -0.7539, 0.0308, -2.2247, 0.0162, 1.4170, 0.8109]) # current values match IsaacSim setup's reset state. Old values in this code were: np.array([0, -1 / 5 * np.pi, 0, -4 / 5 * np.pi, 0, 3 / 5 * np.pi, 0.0])
         self.randomize_low = np.array([-0.1, -0.2, -0.1, -0.3, -0.3, -0.3])
         self.randomize_high = np.array([0.1, 0.2, 0.1, 0.3, 0.3, 0.3])
         self.DoF = 7 if ("cartesian" in action_space) else 8
-        self.control_hz = 15
+        self.control_hz = 50
 
         if nuc_ip is None:
             from franka.robot import FrankaRobot
