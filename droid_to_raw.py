@@ -10,35 +10,61 @@ def bridge_to_raw(droid_dir, output_episode_dir):
     os.makedirs(output_episode_dir, exist_ok=True)
     
     h5_path = os.path.join(droid_dir, "trajectory.h5")
-    # Camera files are now saved here by realsense_camera.py
-    # Note: verify if it is recording/Recordings or just recordings depending on your setup
-    rec_dir = os.path.join(droid_dir, "recordings/Recordings") 
+    
+    # Locate recordings directory (Handle potential nesting)
+    rec_dir = os.path.join(droid_dir, "recordings/Recordings")
+    if not os.path.exists(rec_dir):
+        rec_dir = os.path.join(droid_dir, "recordings")
     
     print(f"Processing: {droid_dir}")
 
     # 1. Process H5 (Robot State)
     with h5py.File(h5_path, 'r') as f:
+        # Timestamps (ms -> sec float32)
         t_ms = f['observation']['timestamp']['control']['step_end'][:]
         t_rel = (t_ms / 1000.0).astype(np.float32)
         
-        # EEF
+        # --- EEF Poses (With 45deg Correction) ---
         cart = f['action']['cartesian_position'][:]
         xyz = cart[:, :3]
-        quat = R.from_euler('xyz', cart[:, 3:6]).as_quat()
-        np.save(os.path.join(output_episode_dir, "eef_poses.npy"), 
-                np.hstack([t_rel[:,None], xyz, quat]).astype(np.float32))
+        
+        # Convert DROID Euler (XYZ) to Rotation Object
+        rot_droid = R.from_euler('xyz', cart[:, 3:6])
+        
+        # Create Correction: 45 degrees around Z-axis
+        correction = R.from_euler('z', 45, degrees=True)
+        
+        # Apply correction (Global Frame: Correction * Current)
+        rot_corrected = correction * rot_droid
+        quat = rot_corrected.as_quat() # [x, y, z, w]
+        
+        # Save [t, x, y, z, qx, qy, qz, qw]
+        eef_poses = np.hstack([t_rel[:,None], xyz, quat]).astype(np.float32)
+        np.save(os.path.join(output_episode_dir, "eef_poses.npy"), eef_poses)
 
-        # Gripper
-        g_pos = f['action']['gripper_position'][:] / 0.068
-        np.save(os.path.join(output_episode_dir, "gripper_positions.npy"), 
-                np.hstack([t_rel[:,None], g_pos[:,None]]).astype(np.float32))
+        # Gripper (Normalize 0.068 -> 1.0)
+        g_pos = f['action']['gripper_position'][:] 
+        g_pos_norm = g_pos / 0.068
+        
+        gripper_data = np.hstack([t_rel[:,None], g_pos_norm[:,None]]).astype(np.float32)
+        np.save(os.path.join(output_episode_dir, "gripper_positions.npy"), gripper_data)
 
         # Joints
         j_pos = f['observation']['robot_state']['joint_positions'][:]
-        np.save(os.path.join(output_episode_dir, "joint_states.npy"), 
-                np.hstack([t_rel[:,None], j_pos]).astype(np.float32))
+        joint_states = np.hstack([t_rel[:,None], j_pos]).astype(np.float32)
+        np.save(os.path.join(output_episode_dir, "joint_states.npy"), joint_states)
 
-    # 2. Process Cameras (Rename & Move)
+    # --- 2. Generate events.npz ---
+    # Required to match data_collector.py format exactly
+    events = {
+        "reached_object": np.empty((0,), dtype=np.float32),
+        "gripped_object": np.empty((0,), dtype=np.float32),
+        "placed_object": np.empty((0,), dtype=np.float32),
+        "dropped_object": np.empty((0,), dtype=np.float32)
+    }
+    np.savez(os.path.join(output_episode_dir, "events.npz"), **events)
+
+    # --- 3. Process Cameras (Rename & Move) ---
     cam_mapping = {
         "022422070872": "ext1",
         "135622077246": "wrist"
@@ -66,18 +92,15 @@ def bridge_to_raw(droid_dir, output_episode_dir):
             print(f"[{role}] Copied video and timestamps.")
 
     print(f"[*] Success: Raw data generated in {output_episode_dir}")
-
-#if __name__ == "__main__":
-#    # Update paths as needed
-#    bridge_to_raw(
-#        "/home/robot/droid/data/success/2026-01-21/Wed_Jan_21_12:43:17_2026/", 
-#        "/home/robot/vla_data/raw/106"
-#    )
+    return True
 
 def batch_process_droid(droid_dir, output_dir):
     """Gathers all droid-teleop sample folders under droid_dir and converts them into numbered outputs saved under output_dir. """
     # Find all subdirectories that contain a trajectory.h5 file
-    # Sorting ensures that the 1...n numbering is deterministic
+    if not os.path.exists(droid_dir):
+        print(f"Error: Source directory {droid_dir} does not exist.")
+        return
+
     samples = sorted([
         os.path.join(droid_dir, d) for d in os.listdir(droid_dir)
         if os.path.isdir(os.path.join(droid_dir, d))
@@ -88,11 +111,14 @@ def batch_process_droid(droid_dir, output_dir):
     count = 0
     for i, sample_path in enumerate(samples, start=1):
         # Create output path: /home/robot/vla_data/output_dir/i
-        output_path = os.path.join("", output_dir, str(i))
+        output_path = os.path.join(output_dir, str(i))
         
-        success = bridge_to_raw(sample_path, output_path)
-        if success:
-            count += 1
+        try:
+            success = bridge_to_raw(sample_path, output_path)
+            if success:
+                count += 1
+        except Exception as e:
+            print(f"Failed to process {sample_path}: {e}")
             
     print(f"\nBatch processing complete. Successfully converted {count}/{len(samples)} samples.")
 
@@ -101,7 +127,7 @@ if __name__ == "__main__":
     parser.add_argument("--droid_dir", type=str, required=True, 
                         help="Path to the directory containing DROID sample folders.")
     parser.add_argument("--output_dir", type=str, required=True, 
-                        help="The name to use for the output folder (e.g., 'success_2026_01_21').")
+                        help="The base output directory (e.g. /home/robot/vla_data/raw). Episodes will be saved as 1, 2, 3... inside.")
 
     args = parser.parse_args()
     
